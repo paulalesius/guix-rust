@@ -33,6 +33,16 @@
   #:use-module (ice-9 match)
   #:use-module (srfi srfi-26))
 
+(define* (nix-system->gnu-triplet-for-rust
+          #:optional (system (%current-system)))
+  (match system
+    ("x86_64-linux"   "x86_64-unknown-linux-gnu")
+    ("i686-linux"     "i686-unknown-linux-gnu")
+    ("armhf-linux"    "armv7-unknown-linux-gnueabihf")
+    ("aarch64-linux"  "aarch64-unknown-linux-gnu")
+    ("mips64el-linux" "mips64el-unknown-linux-gnuabi64")
+    (_                (nix-system->gnu-triplet system))))
+
 (define* (rust-uri version #:key (dist "static"))
   (string-append "https://" dist ".rust-lang.org/dist/"
                  "rustc-" version "-src.tar.gz"))
@@ -97,6 +107,7 @@
           "1l4rrbzhxv88pnfq94nbyb9m6lfnjwixma3mwjkmvvs2aqlq158z")))
     (package
       (inherit base-rust)
+      (outputs (cons "clippy" (package-outputs base-rust)))
       (source
        (origin
          (inherit (package-source base-rust))
@@ -110,15 +121,24 @@
           `(modify-phases ,phases
             (delete 'check)
             (add-after 'configure 'set-nightly-config
-              (lambda _
-                (substitute* "config.toml"
-                  (("^submodules = .*" all)
-                   (string-append all
+              (lambda* (#:key inputs #:allow-other-keys)
+                (let* ((gcc (assoc-ref inputs "gcc"))
+                       (gnu-triplet ,(or (%current-target-system)
+                                      (nix-system->gnu-triplet-for-rust))))
+                  (substitute* "config.toml"
+                    (("^submodules = .*" all)
+                     (string-append all
                                  "profiler = true\n"
                                  "sanitizers = true\n"
                                  "verbose = 1\n"))
-                  (("channel = \"stable\"")
-                   "channel = \"nightly\""))))
+                    (("channel = \"stable\"")
+                     "channel = \"nightly\"")
+                    (("\\[llvm\\]")
+                      (string-append
+                                "[llvm]\n"
+                                 "cxxflags = \"-I" gcc "/include/c++/"
+                                 gnu-triplet
+                                 "/\"\n"))))))
             (replace 'build
               (lambda* (#:key parallel-build? #:allow-other-keys)
                 (let ((job-spec (string-append
@@ -129,7 +149,24 @@
                           "library/std"
                           "src/tools/cargo"
                           "src/tools/rustfmt"
-                          "src/tools/clippy"))))))))
+                          "src/tools/clippy"))))
+            (replace 'install
+               ;; Phase overridden to also install clippy.
+               (lambda* (#:key outputs #:allow-other-keys)
+                 (invoke "./x.py" "install")
+                 (substitute* "config.toml"
+                   ;; Adjust the prefix to the 'cargo' output.
+                   (("prefix = \"[^\"]*\"")
+                    (format #f "prefix = ~s" (assoc-ref outputs "cargo"))))
+                 (invoke "./x.py" "install" "cargo")
+                 (substitute* "config.toml"
+                   ;; Adjust the prefix to the 'rustfmt' output.
+                   (("prefix = \"[^\"]*\"")
+                    (format #f "prefix = ~s" (assoc-ref outputs "rustfmt"))))
+                 (invoke "./x.py" "install" "rustfmt")
+                 (substitute* "config.toml"
+                   (("prefix = \"[^\"]*\"")
+                    (format #f "prefix = ~s" (assoc-ref outputs "clippy"))))))))))
       (inputs (alist-replace "llvm" (list llvm-14)
                              (package-inputs base-rust)))
       (native-inputs (cons* `("gcc" ,gcc-12)
@@ -154,4 +191,4 @@
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box."))))
 
-;;rust-1.63
+rust-1.63
