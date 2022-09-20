@@ -107,6 +107,7 @@
           "1l4rrbzhxv88pnfq94nbyb9m6lfnjwixma3mwjkmvvs2aqlq158z")))
     (package
       (inherit base-rust)
+      (name "rust-nightly")
       (outputs (cons "clippy" (package-outputs base-rust)))
       (source
        (origin
@@ -117,6 +118,8 @@
        (substitute-keyword-arguments (package-arguments base-rust)
          ((#:tests? _ #f)
          #f)
+         ((#:validate-runpath? _ #f)
+          #f)
          ((#:phases phases)
           `(modify-phases ,phases
             (delete 'check)
@@ -129,8 +132,8 @@
                     (("^submodules = .*" all)
                      (string-append all
                                  "profiler = true\n"
-                                 "sanitizers = true\n"
-                                 "verbose = 1\n"))
+                                 "sanitizers = true\n"))
+                                 ;;"verbose = 1\n"
                     (("channel = \"stable\"")
                      "channel = \"nightly\"")
                     (("\\[llvm\\]")
@@ -155,29 +158,28 @@
                (lambda* (#:key outputs #:allow-other-keys)
                  (invoke "./x.py" "install")
                  (substitute* "config.toml"
-                   ;; Adjust the prefix to the 'cargo' output.
                    (("prefix = \"[^\"]*\"")
                     (format #f "prefix = ~s" (assoc-ref outputs "cargo"))))
                  (invoke "./x.py" "install" "cargo")
                  (substitute* "config.toml"
-                   ;; Adjust the prefix to the 'rustfmt' output.
                    (("prefix = \"[^\"]*\"")
                     (format #f "prefix = ~s" (assoc-ref outputs "rustfmt"))))
                  (invoke "./x.py" "install" "rustfmt")
                  (substitute* "config.toml"
                    (("prefix = \"[^\"]*\"")
-                    (format #f "prefix = ~s" (assoc-ref outputs "clippy"))))))))))
+                    (format #f "prefix = ~s" (assoc-ref outputs "clippy"))))
+                 (invoke "./x.py" "install" "clippy")))))))
       (inputs (alist-replace "llvm" (list llvm-14)
                              (package-inputs base-rust)))
       (native-inputs (cons* `("gcc" ,gcc-12)
                             `("ninja" ,ninja)
                             (package-native-inputs base-rust))))))
 
-(define-public rust-src
+(define-public rust-nightly-src
   (hidden-package
    (package
      (inherit rust-1.63)
-     (name "rust-src")
+     (name "rust-nightly-src")
      (build-system copy-build-system)
      (native-inputs '())
      (inputs '())
