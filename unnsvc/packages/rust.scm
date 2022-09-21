@@ -185,9 +185,11 @@
      (native-search-paths '())
      (outputs '("out"))
      (arguments
-      `(#:install-plan
+      `(#:validate-runpath? #f
+        #:install-plan
         '(("library" "lib/rustlib/src/rust/library")
           ("src" "lib/rustlib/src/rust/src"))))
      (synopsis "Source code for the Rust standard library")
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box.")))
+
