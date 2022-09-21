@@ -168,7 +168,15 @@
                  (substitute* "config.toml"
                    (("prefix = \"[^\"]*\"")
                     (format #f "prefix = ~s" (assoc-ref outputs "clippy"))))
-                 (invoke "./x.py" "install" "clippy")))))))
+                 (invoke "./x.py" "install" "clippy")))
+            (add-after 'wrap-rustc 'wrap-clippy
+              ;; Clippy also needs to be wrapped to find librustc_driver
+              (lambda* (#:key inputs outputs #:allow-other-keys)
+                (let ((out (assoc-ref outputs "out"))
+                      (clippy (assoc-ref outputs "clippy")))
+                  (wrap-program (string-append clippy "/bin/clippy-driver")
+                    `("LD_LIBRARY_PATH" ":"
+                      suffix (,(string-append out "/lib")))))))))))
       (inputs (alist-replace "llvm" (list llvm-14)
                              (package-inputs base-rust)))
       (native-inputs (cons* `("gcc" ,gcc-12)
@@ -192,4 +200,3 @@
      (synopsis "Source code for the Rust standard library")
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box.")))
-
