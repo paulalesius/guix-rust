@@ -108,7 +108,11 @@
     (package
       (inherit base-rust)
       (name "rust-nightly")
-      (outputs (cons "clippy" (package-outputs base-rust)))
+      (outputs (cons*
+                "clippy"
+                "demangler"
+                "miri"
+                (package-outputs base-rust)))
       (source
        (origin
          (inherit (package-source base-rust))
@@ -152,7 +156,9 @@
                           "library/std"
                           "src/tools/cargo"
                           "src/tools/rustfmt"
-                          "src/tools/clippy"))))
+                          "src/tools/clippy"
+                          "src/tools/rust-demangler"
+                          "src/tools/miri"))))
             (replace 'install
                ;; Phase overridden to also install clippy.
                (lambda* (#:key outputs #:allow-other-keys)
@@ -168,13 +174,25 @@
                  (substitute* "config.toml"
                    (("prefix = \"[^\"]*\"")
                     (format #f "prefix = ~s" (assoc-ref outputs "clippy"))))
-                 (invoke "./x.py" "install" "clippy")))
-            (add-after 'wrap-rustc 'wrap-clippy
+                 (invoke "./x.py" "install" "clippy")
+                 (substitute* "config.toml"
+                   (("prefix = \"[^\"]*\"")
+                    (format #f "prefix = ~s" (assoc-ref outputs "demangler"))))
+                 (invoke "./x.py" "install" "rust-demangler")
+                 (substitute* "config.toml"
+                   (("prefix = \"[^\"]*\"")
+                    (format #f "prefix = ~s" (assoc-ref outputs "miri"))))
+                 (invoke "./x.py" "install" "miri")))
+            (add-after 'wrap-rustc 'wrap-clippy-and-miri
               ;; Clippy also needs to be wrapped to find librustc_driver
               (lambda* (#:key inputs outputs #:allow-other-keys)
                 (let ((out (assoc-ref outputs "out"))
-                      (clippy (assoc-ref outputs "clippy")))
+                      (clippy (assoc-ref outputs "clippy"))
+                      (miri (assoc-ref outputs "miri")))
                   (wrap-program (string-append clippy "/bin/clippy-driver")
+                    `("LD_LIBRARY_PATH" ":"
+                      suffix (,(string-append out "/lib"))))
+                  (wrap-program (string-append miri "/bin/miri")
                     `("LD_LIBRARY_PATH" ":"
                       suffix (,(string-append out "/lib")))))))))))
       (inputs (alist-replace "llvm" (list llvm-14)
@@ -200,3 +218,4 @@
      (synopsis "Source code for the Rust standard library")
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box.")))
+
