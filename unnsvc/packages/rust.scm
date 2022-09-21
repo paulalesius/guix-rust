@@ -176,7 +176,6 @@
                             (package-native-inputs base-rust))))))
 
 (define-public rust-nightly-src
-  (hidden-package
    (package
      (inherit rust-1.63)
      (name "rust-nightly-src")
@@ -191,6 +190,4 @@
           ("src" "lib/rustlib/src/rust/src"))))
      (synopsis "Source code for the Rust standard library")
      (description "This package provide source code for the Rust standard
-library, only use by rust-analyzer, make rust-analyzer out of the box."))))
-
-rust-1.63
+library, only use by rust-analyzer, make rust-analyzer out of the box.")))
