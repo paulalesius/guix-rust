@@ -112,6 +112,7 @@
                 "clippy"
                 "demangler"
                 "miri"
+                "llvm-tools"
                 (package-outputs base-rust)))
       (source
        (origin
@@ -120,10 +121,8 @@
          (snippet '(lambda _ 'nil))))
       (arguments
        (substitute-keyword-arguments (package-arguments base-rust)
-         ((#:tests? _ #f)
-         #f)
-         ((#:validate-runpath? _ #f)
-          #f)
+         ((#:tests? _ #f) #f)
+         ((#:validate-runpath? _ #f) #f)
          ((#:phases phases)
           `(modify-phases ,phases
             (delete 'check)
@@ -135,30 +134,24 @@
                   (substitute* "config.toml"
                     (("^submodules = .*" all)
                      (string-append all
+                                 "extended = true\n"
+                                 "tools = [\"cargo\", \"clippy\", \"rustfmt\", \"analysis\", \"src\", \"rust-demangler\"]\n"
                                  "profiler = true\n"
-                                 "sanitizers = true\n"))
-                                 ;;"verbose = 1\n"
+                                 "sanitizers = true\n"
+                                 "verbose = 0\n"))
                     (("channel = \"stable\"")
                      "channel = \"nightly\"")
                     (("\\[llvm\\]")
                       (string-append
                                 "[llvm]\n"
-                                 "cxxflags = \"-I" gcc "/include/c++/"
-                                 gnu-triplet
-                                 "/\"\n"))))))
+                                 "cxxflags = \"-I" gcc "/include/c++/" gnu-triplet "/\"\n"))))))
             (replace 'build
               (lambda* (#:key parallel-build? #:allow-other-keys)
                 (let ((job-spec (string-append
                                  "-j" (if parallel-build?
                                           (number->string (parallel-job-count))
                                           "1"))))
-                  (invoke "./x.py" job-spec "build"
-                          "library/std"
-                          "src/tools/cargo"
-                          "src/tools/rustfmt"
-                          "src/tools/clippy"
-                          "src/tools/rust-demangler"
-                          "src/tools/miri"))))
+                  (invoke "./x.py" job-spec "build"))))
             (replace 'install
                ;; Phase overridden to also install clippy.
                (lambda* (#:key outputs #:allow-other-keys)
@@ -182,7 +175,18 @@
                  (substitute* "config.toml"
                    (("prefix = \"[^\"]*\"")
                     (format #f "prefix = ~s" (assoc-ref outputs "miri"))))
-                 (invoke "./x.py" "install" "miri")))
+                 (invoke "./x.py" "install" "miri")
+                 ;; Just copy llvm-tools to install path
+                 (let* ((llvm-tools (assoc-ref outputs "llvm-tools"))
+                        (gnu-triplet ,(or (%current-target-system)
+                                      (nix-system->gnu-triplet-for-rust))))
+                   (copy-recursively
+                    (string-append
+                     "build/"
+                     gnu-triplet
+                     "/stage2/lib/rustlib/"
+                     gnu-triplet)
+                    llvm-tools))))
             (add-after 'wrap-rustc 'wrap-clippy-and-miri
               ;; Clippy also needs to be wrapped to find librustc_driver
               (lambda* (#:key inputs outputs #:allow-other-keys)
@@ -219,3 +223,4 @@
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box.")))
 
+rust-1.63
