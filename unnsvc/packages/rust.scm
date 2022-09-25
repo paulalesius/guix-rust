@@ -31,6 +31,7 @@
   #:use-module ((guix build utils) #:select (alist-replace))
   #:use-module (guix utils)
   #:use-module (ice-9 match)
+  #:use-module (ice-9 ftw)
   #:use-module (srfi srfi-26))
 
 (define* (nix-system->gnu-triplet-for-rust
@@ -61,6 +62,9 @@
      (alist-replace "cargo-bootstrap" (list base-rust "cargo")
                     (alist-replace "rustc-bootstrap" (list base-rust)
                                    (package-native-inputs base-rust))))))
+
+(define %cargo-reference-hash
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
 
 (define rust-1.58
   (rust-bootstrapped-package
@@ -205,9 +209,33 @@
                             `("ninja" ,ninja)
                             (package-native-inputs base-rust))))))
 
+(define-public rust-1.64
+  (let ((base-rust
+         (rust-bootstrapped-package
+          rust-1.63 "1.64.0"
+          "018j720b2n12slp4xk64jc6shkncd46d621qdyzh2a8s3r49zkdk")))
+    (package
+      (inherit base-rust)
+      (arguments
+       (substitute-keyword-arguments (package-arguments base-rust)
+         ((#:tests? _ #f)
+          #f)
+         ((#:phases phases)
+          `(modify-phases ,phases
+            ;; Lockfile checksums are now verified for the bootstrap, fix them to the
+            ;; reference hash used for vendored dependencies in Guix.
+            (add-after 'patch-generated-file-shebangs 'set-bootstrap-no-locked-deps
+              (lambda* _
+                (substitute* "src/bootstrap/Cargo.lock"
+                  (("(checksum = )\".*\"" all name)
+                   (string-append name "\"" ,%cargo-reference-hash "\"")))
+                (substitute* "src/tools/rust-analyzer/Cargo.lock"
+                  (("(checksum = )\".*\"" all name)
+                   (string-append name "\"" ,%cargo-reference-hash "\""))))))))))))
+
 (define-public rust-nightly-src
    (package
-     (inherit rust-1.63)
+     (inherit rust-1.64)
      (name "rust-nightly-src")
      (build-system copy-build-system)
      (native-inputs '())
@@ -222,5 +250,3 @@
      (synopsis "Source code for the Rust standard library")
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box.")))
-
-rust-1.63
