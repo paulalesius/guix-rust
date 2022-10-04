@@ -90,8 +90,6 @@
          ((#:tests? _ #f)
           #f))))))
 
-;; Latest needs to be public so it can be included in a profile, while just "rust" is
-;; intended to build system artifacts.
 (define-public rust-1.62
   (let ((base-rust
          (rust-bootstrapped-package
@@ -138,7 +136,7 @@
                   (substitute* "config.toml"
                     (("^submodules = .*" all)
                      (string-append all
-                                 "extended = true\n"
+                                 "extended = false\n"
                                  "tools = [\"cargo\", \"clippy\", \"rustfmt\", \"analysis\", \"src\", \"rust-demangler\"]\n"
                                  "profiler = true\n"
                                  "sanitizers = true\n"
@@ -185,11 +183,7 @@
                         (gnu-triplet ,(or (%current-target-system)
                                       (nix-system->gnu-triplet-for-rust))))
                    (copy-recursively
-                    (string-append
-                     "build/"
-                     gnu-triplet
-                     "/stage2/lib/rustlib/"
-                     gnu-triplet)
+                    (string-append "build/" gnu-triplet "/stage2/lib/rustlib/" gnu-triplet)
                     llvm-tools))))
             (add-after 'wrap-rustc 'wrap-clippy-and-miri
               ;; Clippy also needs to be wrapped to find librustc_driver
@@ -231,8 +225,32 @@
                    (string-append name "\"" ,%cargo-reference-hash "\"")))
                 (substitute* "src/tools/rust-analyzer/Cargo.lock"
                   (("(checksum = )\".*\"" all name)
-                   (string-append name "\"" ,%cargo-reference-hash "\""))))))))))))
+                   (string-append name "\"" ,%cargo-reference-hash "\"")))))
+            ;; Reference: https://github.com/rust-lang/rust/blob/master/config.toml.example
+            (add-after 'configure 'set-enable-all-supported-targets
+              (lambda* _
+                  (substitute* "config.toml"
+                    (("\\[build\\]")
+                      (string-append
+                                "[build]\n"
+                                 "target = [\"" ,(nix-system->gnu-triplet-for-rust) "\", \"wasm32-unknown-unknown\", \"wasm32-unknown-emscripten\"]\n")))))
+            (add-after 'configure 'set-cross-target-paths
+              (lambda* (#:key inputs #:allow-other-keys)
+                (let* ((binutils (assoc-ref inputs "binutils"))
+                       (llvm (assoc-ref inputs "llvm"))
+                       (gcc (assoc-ref inputs "gcc")))
+                  (substitute* "config.toml"
+                    (("\\[build\\]")
+                     (string-append
+                      "[target.wasm32-unknown-unknown]\n"
+                      "ar = \"" binutils "/bin/ar\"\n"
+                      "[target.wasm32-unknown-emscripten]\n"
+                      "ar = \"" binutils "/bin/ar\"\n"
+                      "[build]\n")))))))))))))
 
+(define-public rust-nightly rust-1.64)
+
+;; @TODO absorb this into the main build process as a package output§
 (define-public rust-nightly-src
    (package
      (inherit rust-1.64)
@@ -250,3 +268,4 @@
      (synopsis "Source code for the Rust standard library")
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box.")))
+

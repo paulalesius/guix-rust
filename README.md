@@ -3,6 +3,7 @@
 Features in addition to those provided by the base GNU Guix rust distribution:
 
 - Rust 1.64
+- Wasm (host triples: wasm32-unknown-unknown wasm32-unknown-emscripten)
 - Profiler
 - Sanitizers
 - Clippy
