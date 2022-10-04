@@ -3,17 +3,18 @@
 Features in addition to those provided by the base GNU Guix rust distribution:
 
 - Rust 1.64
-- Wasm (host triples: wasm32-unknown-unknown wasm32-unknown-emscripten)
+- Wasm targets
+    - wasm32-unknown-unknown
+    - wasm32-unknown-emscripten
 - Profiler
 - Sanitizers
 - Clippy
 - Miri
 - Rust-demangler
 - Llvm-tools bundled with the source code, as a package output
-- Nightly enabled for the stable release, to use the -Z flags
+- rust-lld
+- Nightly tracking the latest stable release, to use the -Z flags
 - Built using the latest llvm-14 and gcc-12
-
-These improvements are only applied to Rust version 1.63 and later.
 
 ## Manifest
     (specifications->manifest

@@ -227,14 +227,14 @@
                   (("(checksum = )\".*\"" all name)
                    (string-append name "\"" ,%cargo-reference-hash "\"")))))
             ;; Reference: https://github.com/rust-lang/rust/blob/master/config.toml.example
-            (add-after 'configure 'set-enable-all-supported-targets
+            (add-after 'configure 'set-supported-targets
               (lambda* _
                   (substitute* "config.toml"
                     (("\\[build\\]")
                       (string-append
                                 "[build]\n"
                                  "target = [\"" ,(nix-system->gnu-triplet-for-rust) "\", \"wasm32-unknown-unknown\", \"wasm32-unknown-emscripten\"]\n")))))
-            (add-after 'configure 'set-cross-target-paths
+            (add-after 'configure 'set-wasm-target-paths
               (lambda* (#:key inputs #:allow-other-keys)
                 (let* ((binutils (assoc-ref inputs "binutils"))
                        (llvm (assoc-ref inputs "llvm"))
@@ -246,7 +246,17 @@
                       "ar = \"" binutils "/bin/ar\"\n"
                       "[target.wasm32-unknown-emscripten]\n"
                       "ar = \"" binutils "/bin/ar\"\n"
-                      "[build]\n")))))))))))))
+                      "[build]\n"))))))
+            (add-after 'configure 'set-build-lld
+              (lambda _
+                (substitute* "config.toml"
+                  (("\\[rust\\]")
+                   (string-append
+                    "[rust]\n"
+                    "lld = true\n"
+                    "remap-debuginfo = true\n")))))))))
+      (native-inputs (cons* `("libunwind-headers" ,libunwind-headers)
+                            (package-native-inputs base-rust))))))
 
 (define-public rust-nightly rust-1.64)
 
