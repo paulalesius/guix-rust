@@ -247,11 +247,13 @@
                       "[target.wasm32-unknown-emscripten]\n"
                       "ar = \"" llvm "/bin/llvm-ar\"\n"
                       "[build]\n"))))))
-            (add-after 'configure 'remove-deprecated-llvm-config
+            (add-after 'configure 'set-build-llvm
               (lambda _
                 (substitute* "config.toml"
-                  (("^llvm = .*$")
-                   ""))))))))
+                  (("^\\[rust]")
+                   (string-append
+                    "[rust]\n"
+                    "lld = true\n")))))))))
       (native-inputs (cons* `("libunwind-headers" ,libunwind-headers)
                             (package-native-inputs base-rust))))))
 
@@ -276,3 +278,4 @@
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box.")))
 
+;;rust-1.64
