@@ -243,18 +243,15 @@
                     (("\\[build\\]")
                      (string-append
                       "[target.wasm32-unknown-unknown]\n"
-                      "ar = \"" binutils "/bin/ar\"\n"
+                      "ar = \"" llvm "/bin/llvm-ar\"\n"
                       "[target.wasm32-unknown-emscripten]\n"
-                      "ar = \"" binutils "/bin/ar\"\n"
+                      "ar = \"" llvm "/bin/llvm-ar\"\n"
                       "[build]\n"))))))
-            (add-after 'configure 'set-build-lld
+            (add-after 'configure 'remove-deprecated-llvm-config
               (lambda _
                 (substitute* "config.toml"
-                  (("\\[rust\\]")
-                   (string-append
-                    "[rust]\n"
-                    "lld = true\n"
-                    "remap-debuginfo = true\n")))))))))
+                  (("^llvm = .*$")
+                   ""))))))))
       (native-inputs (cons* `("libunwind-headers" ,libunwind-headers)
                             (package-native-inputs base-rust))))))
 
