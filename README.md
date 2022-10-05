@@ -3,9 +3,8 @@
 Features in addition to those provided by the base GNU Guix rust distribution:
 
 - Rust 1.64
-- Wasm targets
+- Wasm targets (Don't work as expected at present as they use the wrong linker, will have to re-write the config.toml when I have the time)
     - wasm32-unknown-unknown
-    - wasm32-unknown-emscripten
 - Profiler
 - Sanitizers
 - Clippy
