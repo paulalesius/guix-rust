@@ -269,6 +269,7 @@
            (lambda* (#:key inputs outputs #:allow-other-keys)
              (let* ((out (assoc-ref outputs "out"))
                     (gcc (assoc-ref inputs "gcc"))
+                    (gcclib (assoc-ref inputs "gcc:lib"))
                     (python (assoc-ref inputs "python"))
                     (binutils (assoc-ref inputs "binutils"))
                     (rustc (assoc-ref inputs "rustc-bootstrap"))
@@ -279,7 +280,8 @@
                     (clang (assoc-ref inputs "clang"))
                     (triplet ,(or (%current-target-system)
                                   (nix-system->gnu-triplet-for-rust)))
-                    (libcxx (assoc-ref inputs "libcxx")))
+                    (libcxx (assoc-ref inputs "libcxx"))
+                    (glibc (assoc-ref inputs "glibc")))
                ;; The compiler is no longer directly built against jemalloc, but
                ;; rather via the jemalloc-sys crate (which vendors the jemalloc
                ;; source). To use jemalloc we must enable linking to it (otherwise
@@ -293,8 +295,9 @@
                    (display (string-append "
 [llvm]
 thin-lto = true
-cxxflags = \"-I" libcxx "/include" "\"
-ldflags = \"-L" libcxx "/lib\"
+cxxflags = \"-I" libcxx "/include -I" glibc "/include -I" gcc "/include" "\"
+cflags = \"-I" gcc "/include" "\"
+ldflags = \"-L" libcxx "/lib -L" glibc "/lib -L" gcclib "/lib" "\"
 use-libcxx = true
 [build]
 cargo = \"" cargo "/bin/cargo" "\"
@@ -323,6 +326,7 @@ cc = \"" clang "/bin/clang" "\"
 cxx = \"" clang "/bin/clang++" "\"
 ar = \"" llvm "/bin/llvm-ar" "\"
 #ranlib = \"" binutils "/bin/ranlib" "\"
+linker = \"" lld "/bin/lld" "\"
 [target.wasm32-unknown-unknown]
 llvm-config = \"" llvm "/bin/llvm-config" "\"
 cc = \"" clang "/bin/clang" "\"
@@ -342,6 +346,8 @@ linker = \"" lld "/bin/lld" "\"
                             `("lld" ,lld)
                             `("gcc" ,gcc)
                             `("libcxx" ,libcxx)
+                            `("glibc" ,glibc)
+                            `("gcc:lib" ,gcc "lib")
                             (package-native-inputs base-rust))))))
 
 (define-public rust-nightly rust-1.64)
