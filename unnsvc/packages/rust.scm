@@ -279,7 +279,7 @@
                     (clang (assoc-ref inputs "clang"))
                     (triplet ,(or (%current-target-system)
                                   (nix-system->gnu-triplet-for-rust)))
-                    (libstdcpp (assoc-ref inputs "libstdc++")))
+                    (libcxx (assoc-ref inputs "libcxx")))
                ;; The compiler is no longer directly built against jemalloc, but
                ;; rather via the jemalloc-sys crate (which vendors the jemalloc
                ;; source). To use jemalloc we must enable linking to it (otherwise
@@ -293,7 +293,9 @@
                    (display (string-append "
 [llvm]
 thin-lto = true
-cxxflags = \"-I" gcc"/include -I" gcc "/include/c++/" triplet "\"
+cxxflags = \"-I" libcxx "/include" "\"
+ldflags = \"-L" libcxx "/lib\"
+use-libcxx = true
 [build]
 cargo = \"" cargo "/bin/cargo" "\"
 rustc = \"" rustc "/bin/rustc" "\"
@@ -338,6 +340,8 @@ linker = \"" lld "/bin/lld" "\"
       (native-inputs (cons* `("libunwind-headers" ,libunwind-headers)
                             `("clang" ,clang-14)
                             `("lld" ,lld)
+                            `("gcc" ,gcc)
+                            `("libcxx" ,libcxx)
                             (package-native-inputs base-rust))))))
 
 (define-public rust-nightly rust-1.64)
