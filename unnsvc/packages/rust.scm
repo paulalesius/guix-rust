@@ -146,7 +146,8 @@
                     (("\\[llvm\\]")
                       (string-append
                                 "[llvm]\n"
-                                 "cxxflags = \"-I" gcc "/include/c++/" gnu-triplet "/\"\n"))))))
+                                 "cxxflags = \"-I" gcc "/include/c++/" gnu-triplet "/\"\n"
+                                 ))))))
             (replace 'build
               (lambda* (#:key parallel-build? #:allow-other-keys)
                 (let ((job-spec (string-append
@@ -227,34 +228,116 @@
                   (("(checksum = )\".*\"" all name)
                    (string-append name "\"" ,%cargo-reference-hash "\"")))))
             ;; Reference: https://github.com/rust-lang/rust/blob/master/config.toml.example
-            (add-after 'configure 'set-supported-targets
-              (lambda* _
-                  (substitute* "config.toml"
-                    (("\\[build\\]")
-                      (string-append
-                                "[build]\n"
-                                 "target = [\"" ,(nix-system->gnu-triplet-for-rust) "\", \"wasm32-unknown-unknown\", \"wasm32-unknown-emscripten\"]\n")))))
-            (add-after 'configure 'set-wasm-target-paths
-              (lambda* (#:key inputs #:allow-other-keys)
-                (let* ((binutils (assoc-ref inputs "binutils"))
-                       (llvm (assoc-ref inputs "llvm"))
-                       (gcc (assoc-ref inputs "gcc")))
-                  (substitute* "config.toml"
-                    (("\\[build\\]")
-                     (string-append
-                      "[target.wasm32-unknown-unknown]\n"
-                      "ar = \"" llvm "/bin/llvm-ar\"\n"
-                      "[target.wasm32-unknown-emscripten]\n"
-                      "ar = \"" llvm "/bin/llvm-ar\"\n"
-                      "[build]\n"))))))
-            (add-after 'configure 'set-build-llvm
-              (lambda _
-                (substitute* "config.toml"
-                  (("^\\[rust]")
-                   (string-append
-                    "[rust]\n"
-                    "lld = true\n")))))))))
+            ;; (add-after 'configure 'set-supported-targets
+            ;;   (lambda* _
+            ;;       (substitute* "config.toml"
+            ;;         (("\\[build\\]")
+            ;;           (string-append
+            ;;                     "[build]\n"
+            ;;                      "target = [\"" ,(nix-system->gnu-triplet-for-rust) "\", \"wasm32-unknown-unknown\"]\n")))))
+            ;; (add-after 'configure 'set-wasm-target-paths
+            ;;   (lambda* (#:key inputs #:allow-other-keys)
+            ;;     (let* ((binutils (assoc-ref inputs "binutils"))
+            ;;            (llvm (assoc-ref inputs "llvm"))
+            ;;            (clang (assoc-ref inputs "clang"))
+            ;;            (gcc (assoc-ref inputs "gcc")))
+            ;;       (substitute* "config.toml"
+            ;;         (("\\[build\\]")
+            ;;          (string-append
+            ;;           "[target.wasm32-unknown-unknown]\n"
+            ;;           "linker = lld\n"
+            ;;           ;;"ar = \"" binutils "/bin/ar\"\n"
+            ;;           ;;"ranlib = \"" binutils "/bin/ranlib\"\n"
+            ;;           ;;"cc = \"" gcc "/bin/gcc\"\n"
+            ;;           ;;"cxx = \"" gcc "/bin/g++\"\n"
+            ;;           "[build]\n"))))))
+            ;; (add-after 'configure 'set-build-llvm
+            ;;   (lambda _
+            ;;     (substitute* "config.toml"
+            ;;       (("^\\[rust]")
+            ;;        (string-append
+            ;;         "[rust]\n"
+            ;;         "default-linker = \"clang\"\n"
+            ;;         "lld = true\n")))))
+            ;;(delete 'set-build-llvm)
+            ;;(delete 'set-wasm-target-paths)
+            ;;(delete 'set-supported-targets)
+            (delete 'set-nightly-config)
+            (delete 'add-gdb-to-config)
+
+         (replace 'configure
+           (lambda* (#:key inputs outputs #:allow-other-keys)
+             (let* ((out (assoc-ref outputs "out"))
+                    (gcc (assoc-ref inputs "gcc"))
+                    (python (assoc-ref inputs "python"))
+                    (binutils (assoc-ref inputs "binutils"))
+                    (rustc (assoc-ref inputs "rustc-bootstrap"))
+                    (cargo (assoc-ref inputs "cargo-bootstrap"))
+                    (llvm (assoc-ref inputs "llvm"))
+                    (jemalloc (assoc-ref inputs "jemalloc"))
+                    (lld (assoc-ref inputs "lld"))
+                    (clang (assoc-ref inputs "clang"))
+                    (triplet ,(or (%current-target-system)
+                                  (nix-system->gnu-triplet-for-rust)))
+                    (libstdcpp (assoc-ref inputs "libstdc++")))
+               ;; The compiler is no longer directly built against jemalloc, but
+               ;; rather via the jemalloc-sys crate (which vendors the jemalloc
+               ;; source). To use jemalloc we must enable linking to it (otherwise
+               ;; it would use the system allocator), and set an environment
+               ;; variable pointing to the compiled jemalloc.
+               (setenv "JEMALLOC_OVERRIDE"
+                       (search-input-file inputs
+                                          "/lib/libjemalloc_pic.a"))
+               (call-with-output-file "config.toml"
+                 (lambda (port)
+                   (display (string-append "
+[llvm]
+thin-lto = true
+cxxflags = \"-I" gcc"/include -I" gcc "/include/c++/" triplet "\"
+[build]
+cargo = \"" cargo "/bin/cargo" "\"
+rustc = \"" rustc "/bin/rustc" "\"
+docs = false
+python = \"" python "/bin/python" "\"
+vendor = true
+submodules = false
+tools = [\"cargo\", \"clippy\", \"rustfmt\", \"analysis\", \"src\", \"rust-demangler\"]
+profiler = true
+sanitizers = true
+verbose = 0
+target = [\"" triplet "\", \"wasm32-unknown-unknown\"]
+[install]
+prefix = \"" out "\"
+sysconfdir = \"etc\"
+[rust]
+jemalloc=true
+default-linker = \"" lld "/bin/lld" "\"
+lld = false
+channel = \"nightly\"
+rpath = true
+[target." triplet "]
+llvm-config = \"" llvm "/bin/llvm-config" "\"
+cc = \"" clang "/bin/clang" "\"
+cxx = \"" clang "/bin/clang++" "\"
+ar = \"" llvm "/bin/llvm-ar" "\"
+#ranlib = \"" binutils "/bin/ranlib" "\"
+[target.wasm32-unknown-unknown]
+llvm-config = \"" llvm "/bin/llvm-config" "\"
+cc = \"" clang "/bin/clang" "\"
+cxx = \"" clang "/bin/clang++" "\"
+ar = \"" llvm "/bin/llvm-ar" "\"
+#ranlib = \"" binutils "/bin/ranlib" "\"
+linker = \"" lld "/bin/lld" "\"
+[dist]
+") port))))))
+
+            ;;(add-after 'configure 'fail
+            ;;  (lambda _
+            ;;    (invoke "./dfsdf")))
+            ))))
       (native-inputs (cons* `("libunwind-headers" ,libunwind-headers)
+                            `("clang" ,clang-14)
+                            `("lld" ,lld)
                             (package-native-inputs base-rust))))))
 
 (define-public rust-nightly rust-1.64)
@@ -278,4 +361,4 @@
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box.")))
 
-;;rust-1.64
+rust-1.64
