@@ -281,6 +281,7 @@
                     (triplet ,(or (%current-target-system)
                                   (nix-system->gnu-triplet-for-rust)))
                     (libcxx (assoc-ref inputs "libcxx"))
+                    (rustlld (assoc-ref outputs "llvm-tools"))
                     (glibc (assoc-ref inputs "glibc")))
                ;; The compiler is no longer directly built against jemalloc, but
                ;; rather via the jemalloc-sys crate (which vendors the jemalloc
@@ -295,8 +296,8 @@
                    (display (string-append "
 [llvm]
 thin-lto = true
-cxxflags = \"-I" libcxx "/include -I" glibc "/include -I" gcc "/include" "\"
-cflags = \"-I" gcc "/include" "\"
+#cxxflags = \"-I" libcxx "/include -I" glibc "/include -I" gcc "/include" "\"
+#cflags = \"-I" gcc "/include" "\"
 ldflags = \"-L" libcxx "/lib -L" glibc "/lib -L" gcclib "/lib" "\"
 use-libcxx = true
 [build]
@@ -315,25 +316,25 @@ target = [\"" triplet "\", \"wasm32-unknown-unknown\"]
 prefix = \"" out "\"
 sysconfdir = \"etc\"
 [rust]
-jemalloc=true
-default-linker = \"" lld "/bin/lld" "\"
-lld = false
+jemalloc=false
+#default-linker = \"" rustlld "/bin/rust-lld" "\"
+lld = true
 channel = \"nightly\"
 rpath = true
 [target." triplet "]
 llvm-config = \"" llvm "/bin/llvm-config" "\"
-cc = \"" clang "/bin/clang" "\"
-cxx = \"" clang "/bin/clang++" "\"
+#cc = \"" clang "/bin/clang" "\"
+#cxx = \"" clang "/bin/clang++" "\"
 ar = \"" llvm "/bin/llvm-ar" "\"
 #ranlib = \"" binutils "/bin/ranlib" "\"
 linker = \"" lld "/bin/lld" "\"
 [target.wasm32-unknown-unknown]
 llvm-config = \"" llvm "/bin/llvm-config" "\"
-cc = \"" clang "/bin/clang" "\"
-cxx = \"" clang "/bin/clang++" "\"
+#cc = \"" clang "/bin/clang" "\"
+#cxx = \"" clang "/bin/clang++" "\"
 ar = \"" llvm "/bin/llvm-ar" "\"
 #ranlib = \"" binutils "/bin/ranlib" "\"
-linker = \"" lld "/bin/lld" "\"
+linker = \"" rustlld "/bin/rust-lld" "\"
 [dist]
 ") port))))))
 
@@ -349,6 +350,122 @@ linker = \"" lld "/bin/lld" "\"
                             `("glibc" ,glibc)
                             `("gcc:lib" ,gcc "lib")
                             (package-native-inputs base-rust))))))
+
+(define-public rust-1.64-gcc
+  (let ((base-rust
+         (rust-bootstrapped-package
+          rust-1.63 "1.64.0"
+          "018j720b2n12slp4xk64jc6shkncd46d621qdyzh2a8s3r49zkdk")))
+    (package
+      (inherit base-rust)
+      (arguments
+       (substitute-keyword-arguments (package-arguments base-rust)
+         ((#:tests? _ #f)
+          #f)
+         ((#:phases phases)
+          `(modify-phases ,phases
+            (add-after 'patch-generated-file-shebangs 'set-bootstrap-no-locked-deps
+              (lambda* _
+                (substitute* "src/bootstrap/Cargo.lock"
+                  (("(checksum = )\".*\"" all name)
+                   (string-append name "\"" ,%cargo-reference-hash "\"")))
+                (substitute* "src/tools/rust-analyzer/Cargo.lock"
+                  (("(checksum = )\".*\"" all name)
+                   (string-append name "\"" ,%cargo-reference-hash "\"")))))
+            (delete 'set-nightly-config)
+            (delete 'add-gdb-to-config)
+
+         (replace 'configure
+           (lambda* (#:key inputs outputs #:allow-other-keys)
+             (let* ((out (assoc-ref outputs "out"))
+                    (gcc (assoc-ref inputs "gcc"))
+                    (gcclib (assoc-ref inputs "gcc:lib"))
+                    (python (assoc-ref inputs "python"))
+                    (binutils (assoc-ref inputs "binutils"))
+                    (rustc (assoc-ref inputs "rustc-bootstrap"))
+                    (cargo (assoc-ref inputs "cargo-bootstrap"))
+                    (llvm (assoc-ref inputs "llvm"))
+                    (jemalloc (assoc-ref inputs "jemalloc"))
+                    (lld (assoc-ref inputs "lld"))
+                    (clang (assoc-ref inputs "clang"))
+                    (triplet ,(or (%current-target-system)
+                                  (nix-system->gnu-triplet-for-rust)))
+                    (libcxx (assoc-ref inputs "libcxx"))
+                    (glibc (assoc-ref inputs "glibc"))
+                    (gdb (assoc-ref inputs "gdb"))
+                    (rustlld (assoc-ref outputs "llvm-tools")))
+               ;; The compiler is no longer directly built against jemalloc, but
+               ;; rather via the jemalloc-sys crate (which vendors the jemalloc
+               ;; source). To use jemalloc we must enable linking to it (otherwise
+               ;; it would use the system allocator), and set an environment
+               ;; variable pointing to the compiled jemalloc.
+               (setenv "JEMALLOC_OVERRIDE"
+                       (search-input-file inputs
+                                          "/lib/libjemalloc_pic.a"))
+               (call-with-output-file "config.toml"
+                 (lambda (port)
+                   (display (string-append "
+[llvm]
+thin-lto = false
+#cxxflags = \"-I" libcxx "/include -I" glibc "/include -I" gcc "/include" "\"
+#cflags = \"-I" gcc "/include" "\"
+#ldflags = \"-L" libcxx "/lib -L" glibc "/lib -L" gcclib "/lib" "\"
+cxxflags = \"-I" gcc "/include/c++/" triplet "\"
+#ldflags = \"-L" gcclib "/lib\"
+use-libcxx = false
+[build]
+cargo = \"" cargo "/bin/cargo" "\"
+rustc = \"" rustc "/bin/rustc" "\"
+gdb = \"" gdb "/bin/gdb\"
+docs = false
+python = \"" python "/bin/python" "\"
+vendor = true
+submodules = false
+tools = [\"cargo\", \"clippy\", \"rustfmt\", \"analysis\", \"src\", \"rust-demangler\"]
+profiler = true
+sanitizers = true
+verbose = 0
+target = [\"" triplet "\", \"wasm32-unknown-unknown\"]
+[install]
+prefix = \"" out "\"
+sysconfdir = \"etc\"
+[rust]
+jemalloc=true
+#default-linker = \"" binutils "/bin/ld" "\"
+lld = true
+channel = \"nightly\"
+rpath = true
+[target." triplet "]
+llvm-config = \"" llvm "/bin/llvm-config" "\"
+cc = \"" gcc "/bin/gcc" "\"
+cxx = \"" gcc "/bin/g++" "\"
+ar = \"" binutils "/bin/ar" "\"
+ranlib = \"" binutils "/bin/ranlib" "\"
+linker = \"" binutils "/bin/ld" "\"
+[target.wasm32-unknown-unknown]
+#llvm-config = \"" llvm "/bin/llvm-config" "\"
+#cc = \"" gcc "/bin/gcc" "\"
+#cxx = \"" gcc "/bin/g++" "\"
+#ar = \"" binutils "/bin/ar" "\"
+#ranlib = \"" binutils "/bin/ranlib" "\"
+linker = \"" rustlld "/bin/rust-lld" "\"
+[dist]
+") port))))))
+
+            ;;(add-after 'configure 'fail
+            ;;  (lambda _
+            ;;    (invoke "./dfsdf")))
+            ))))
+      (native-inputs (cons* `("libunwind-headers" ,libunwind-headers)
+                            `("clang" ,clang-14)
+                            `("lld" ,lld)
+                            `("gcc" ,gcc)
+                            `("libcxx" ,libcxx)
+                            `("glibc" ,glibc)
+                            `("gcc:lib" ,gcc "lib")
+                            (package-native-inputs base-rust))))))
+
+
 
 (define-public rust-nightly rust-1.64)
 
