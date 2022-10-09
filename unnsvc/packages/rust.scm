@@ -218,10 +218,10 @@
        (substitute-keyword-arguments (package-arguments base-rust)
          ((#:tests? _ #f)
           #f)
-         ((#:make-flags flags)
-          `(list (string-append "CC=" "clang")))
-         ((#:configure-flags flags)
-          `(list (string-append "CC=" "clang")))
+         ;;((#:make-flags flags)
+         ;; `(list (string-append "CC=" "clang")))
+         ;;((#:configure-flags flags)
+         ;; `(list (string-append "CC=" "clang")))
          ((#:phases phases)
           `(modify-phases ,phases
             ;; Lockfile checksums are now verified for the bootstrap, fix them to the
@@ -271,10 +271,9 @@
             ;;(delete 'set-supported-targets)
             (delete 'set-nightly-config)
             (delete 'add-gdb-to-config)
-            ;; This was setting gcc
-        (delete 'patch-reference-to-cc)
-        (delete 'add-cc-shim-to-path)
-        (delete 'set-env)
+            (delete 'patch-reference-to-cc)
+            (delete 'add-cc-shim-to-path)
+            (delete 'set-env)
 
         (add-after 'unpack 'set-env-clang
            (lambda* (#:key inputs #:allow-other-keys)
@@ -361,7 +360,7 @@ use-linker = \"" lld "/bin/lld\"
 #cflags = \"-I libunwind-headers /include\"
 #ldflags = \"--unwindlib=libunwind --rtlib=compiler-rt -Wl,-lunwind \"
 #ldflags = \"-Llibunwind/lib -rtlib=compiler-rt -Wl,-lunwind\"
-#link-shared = false
+link-shared = true
 #static-libstdcpp = true
 #clang = true
 
