@@ -24,6 +24,7 @@
   #:use-module (guix build-system copy)
   #:use-module (guix build-system gnu)
   #:use-module (guix build-system trivial)
+  #:use-module (gnu packages libunwind)
   #:use-module (guix download)
   #:use-module (guix git-download)
   #:use-module ((guix licenses) #:prefix license:)
@@ -283,6 +284,7 @@
                     (libcxx (assoc-ref inputs "libcxx"))
                     (rustlld (assoc-ref outputs "llvm-tools"))
                     (libunwind-headers (assoc-ref inputs "libunwind-headers"))
+                    (libunwind (assoc-ref inputs "libunwind"))
                     (glibc (assoc-ref inputs "glibc")))
                ;; The compiler is no longer directly built against jemalloc, but
                ;; rather via the jemalloc-sys crate (which vendors the jemalloc
@@ -296,19 +298,20 @@
                  (lambda (port)
                    (display (string-append "
 [llvm]
-thin-lto = true
-
+#thin-lto = true
 # cxxflags = \"-I" libcxx "/include -I" glibc "/include -I" gcc "/include" "\"
 # ldflags = \"-L" libcxx "/lib -L" glibc "/lib -L" gcclib "/lib" "\"
 #cxxflags = \"-I" libunwind-headers "/include\"
 #cflags = \"-I" libunwind-headers "/include\"
 #ldflags = \"--unwindlib=libunwind --rtlib=compiler-rt -Wl,-lunwind \"
+#ldflags = \"-L"libunwind"/lib -rtlib=compiler-rt -Wl,-lunwind\"
+#use-libcxx = true
 
-use-libcxx = true
-link-shared = true
-#static-libstdcpp = false
 ninja = true
-clang = true
+
+#link-shared = false
+#static-libstdcpp = true
+#clang = true
 
 [build]
 cargo = \"" cargo "/bin/cargo" "\"
@@ -322,7 +325,6 @@ profiler = true
 sanitizers = false
 verbose = 0
 target = [\"" triplet "\", \"wasm32-unknown-unknown\"]
-cargo-native-static = false
 
 [install]
 prefix = \"" out "\"
@@ -331,22 +333,26 @@ sysconfdir = \"etc\"
 [rust]
 jemalloc=false
 default-linker = \"" lld "/bin/lld" "\"
-#lld = true
+#default-linker = \""binutils"/bin/ld\"
+# build rust-lld to use in linking for wasm32 target
+lld = true
+#use-lld = true
+llvm-tools = true
 channel = \"nightly\"
 rpath = true
 optimize = true
 codegen-tests = false
 verbose-tests = false
-llvm-libunwind = 'yes'
+# system/in-tree/no
+#llvm-libunwind = \"no\"
 
 [target." triplet "]
 llvm-config = \"" llvm "/bin/llvm-config" "\"
-cc = \"" clang "/bin/clang" "\"
-cxx = \"" clang "/bin/clang++" "\"
-ar = \"" llvm "/bin/llvm-ar" "\"
-#ranlib = \"" binutils "/bin/ranlib" "\"
-linker = \"" lld "/bin/lld" "\"
-#ldflags = \"-L" libcxx "/lib -L" glibc "/lib -L" gcclib "/lib" "\"
+cc = \"" gcc "/bin/gcc" "\"
+cxx = \"" gcc "/bin/g++" "\"
+ar = \"" binutils "/bin/ar" "\"
+ranlib = \"" binutils "/bin/ranlib" "\"
+#linker = \"" lld "/bin/lld" "\"
 
 [target.wasm32-unknown-unknown]
 llvm-config = \"" llvm "/bin/llvm-config" "\"
@@ -354,7 +360,7 @@ llvm-config = \"" llvm "/bin/llvm-config" "\"
 #cxx = \"" clang "/bin/clang++" "\"
 ar = \"" llvm "/bin/llvm-ar" "\"
 #ranlib = \"" binutils "/bin/ranlib" "\"
-linker = \"" lld "/bin/lld" "\"
+linker = \"" rustlld "/bin/rust-lld" "\"
 
 [dist]
 ") port))))))
@@ -372,6 +378,7 @@ linker = \"" lld "/bin/lld" "\"
             ;;    (invoke "./dfsdf")))
             ))))
       (native-inputs (cons* `("libunwind-headers" ,libunwind-headers)
+                            `("libunwind" ,libunwind)
                             `("clang" ,clang-14)
                             `("lld" ,lld)
                             `("gcc" ,gcc)
