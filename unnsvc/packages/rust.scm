@@ -33,7 +33,9 @@
   #:use-module (guix utils)
   #:use-module (ice-9 match)
   #:use-module (ice-9 ftw)
-  #:use-module (srfi srfi-26))
+  #:use-module (ice-9 pretty-print))
+
+(use-srfis '(1 2 26 98))
 
 (define* (nix-system->gnu-triplet-for-rust
           #:optional (system (%current-system)))
@@ -216,6 +218,10 @@
        (substitute-keyword-arguments (package-arguments base-rust)
          ((#:tests? _ #f)
           #f)
+         ((#:make-flags flags)
+          `(list (string-append "CC=" "clang")))
+         ((#:configure-flags flags)
+          `(list (string-append "CC=" "clang")))
          ((#:phases phases)
           `(modify-phases ,phases
             ;; Lockfile checksums are now verified for the bootstrap, fix them to the
@@ -265,14 +271,50 @@
             ;;(delete 'set-supported-targets)
             (delete 'set-nightly-config)
             (delete 'add-gdb-to-config)
+            ;; This was setting gcc
+        (delete 'patch-reference-to-cc)
+        (delete 'add-cc-shim-to-path)
+        (delete 'set-env)
 
+        (add-after 'unpack 'set-env-clang
+           (lambda* (#:key inputs #:allow-other-keys)
+             (setenv "SHELL" (which "sh"))
+             (setenv "CONFIG_SHELL" (which "sh"))
+             (setenv "CC" (string-append (assoc-ref inputs "clang") "/bin/clang"))
+             (setenv "CXX" (string-append (assoc-ref inputs "clang") "/bin/clang"))
+             ;; The Guix LLVM package installs only shared libraries.
+             (setenv "LLVM_LINK_SHARED" "1")))
+
+        ;; Ugly workaround, just set clang to be found first in the path and link it to /bin/gcc
+        (add-after 'set-env-clang 'add-cc-shim-to-path-clang
+           (lambda* (#:key inputs #:allow-other-keys)
+             (mkdir-p "/tmp/bin")
+             ;;(symlink (which "clang") "/tmp/bin/cc")
+             (symlink (string-append (assoc-ref inputs "clang") "/bin/clang") "/tmp/bin/cc")
+             (symlink (string-append (assoc-ref inputs "clang") "/bin/clang") "/tmp/bin/gcc")
+             (setenv "PATH" (string-append "/tmp/bin:" (getenv "PATH")))))
+
+         ;; (replace 'patch-reference-to-cc
+         ;;   ;; This prevents errors like 'error: linker `cc` not found' when
+         ;;   ;; "cc" is not found on PATH.
+         ;;   (lambda* (#:key inputs #:allow-other-keys)
+         ;;     (let ((clang (assoc-ref inputs "clang")))
+         ;;       (substitute* (find-files "." "^link.rs$")
+         ;;         (("\"cc\".as_ref")
+         ;;          (format #f "~s.as_ref" (string-append clang "/bin/clang")))))))
+        (add-after 'unpack 'set-clang
+          (lambda* _
+            (lambda* (#:key inputs #:allow-other-keys)
+              (let* ((clang (assoc-ref inputs "clang")))
+                (setenv "CC" (string-append clang "/bin/clang"))
+                (setenv "CXX" (string-append clang "/bin/clang++"))))))
          (replace 'configure
            (lambda* (#:key inputs outputs #:allow-other-keys)
              (let* ((out (assoc-ref outputs "out"))
-                    (gcc (assoc-ref inputs "gcc"))
-                    (gcclib (assoc-ref inputs "gcc:lib"))
+                    ;;(gcc (assoc-ref inputs "gcc"))
+                    ;;(gcclib (assoc-ref inputs "gcc:lib"))
                     (python (assoc-ref inputs "python"))
-                    (binutils (assoc-ref inputs "binutils"))
+                    ;;(binutils (assoc-ref inputs "binutils"))
                     (rustc (assoc-ref inputs "rustc-bootstrap"))
                     (cargo (assoc-ref inputs "cargo-bootstrap"))
                     (llvm (assoc-ref inputs "llvm"))
@@ -283,14 +325,23 @@
                                   (nix-system->gnu-triplet-for-rust)))
                     (libcxx (assoc-ref inputs "libcxx"))
                     (rustlld (assoc-ref outputs "llvm-tools"))
-                    (libunwind-headers (assoc-ref inputs "libunwind-headers"))
+                    ;;(gcc (assoc-ref inputs "gcc"))
+                    ;;(libunwind-headers (assoc-ref inputs "libunwind-headers"))
                     (libunwind (assoc-ref inputs "libunwind"))
-                    (glibc (assoc-ref inputs "glibc")))
+                    ;;(glibc (assoc-ref inputs "glibc"))
+                    )
                ;; The compiler is no longer directly built against jemalloc, but
                ;; rather via the jemalloc-sys crate (which vendors the jemalloc
                ;; source). To use jemalloc we must enable linking to it (otherwise
                ;; it would use the system allocator), and set an environment
                ;; variable pointing to the compiled jemalloc.
+               (display (format #f "### LLVM ~a ~a ~a\n" llvm lld clang))
+               (display (format #f "### eh ~a ~a ~a\n" rustc python out))
+               (display (format #f "### jemalloc ~a ~a\n" jemalloc rustlld))
+               ;;(display (format #f "### gcc ~a ~a\n" gcc libcxx))
+               (display (format #f "### inputs ~a\n" inputs))
+               (display (format #f "### clang-runtime ~a\n" clang))
+               ;;,(pretty-print inputs)
                (setenv "JEMALLOC_OVERRIDE"
                        (search-input-file inputs
                                           "/lib/libjemalloc_pic.a"))
@@ -298,15 +349,18 @@
                  (lambda (port)
                    (display (string-append "
 [llvm]
-#thin-lto = true
-# cxxflags = \"-I" libcxx "/include -I" glibc "/include -I" gcc "/include" "\"
-# ldflags = \"-L" libcxx "/lib -L" glibc "/lib -L" gcclib "/lib" "\"
-#cxxflags = \"-I" libunwind-headers "/include\"
-#cflags = \"-I" libunwind-headers "/include\"
+use-libcxx = true
+ninja = true
+ldflags = \"-L" libcxx "/lib -L" libunwind "/lib\"
+thin-lto = true
+use-linker = \"" lld "/bin/lld\"
+
+# cxxflags = \"-I\" libcxx \"/include -I\" glibc \"/include -I\" gcc \"/include" "\"
+# ldflags = \"-L\" libcxx \"/lib -L\" glibc \"/lib -L\" gcclib \"/lib" "\"
+#cxxflags = \"-Ilibunwind-headers /include\"
+#cflags = \"-I libunwind-headers /include\"
 #ldflags = \"--unwindlib=libunwind --rtlib=compiler-rt -Wl,-lunwind \"
-#ldflags = \"-L"libunwind"/lib -rtlib=compiler-rt -Wl,-lunwind\"
-#use-libcxx = true
-#ninja = true
+#ldflags = \"-Llibunwind/lib -rtlib=compiler-rt -Wl,-lunwind\"
 #link-shared = false
 #static-libstdcpp = true
 #clang = true
@@ -318,10 +372,10 @@ docs = false
 python = \"" python "/bin/python" "\"
 vendor = true
 submodules = false
-#tools = [\"cargo\", \"clippy\", \"rustfmt\", \"analysis\", \"src\", \"rust-demangler\"]
+tools = [\"cargo\", \"clippy\", \"rustfmt\", \"analysis\", \"src\", \"rust-demangler\"]
 profiler = true
-#sanitizers = false
-#verbose = 0
+sanitizers = true
+verbose = 0
 target = [\"" triplet "\", \"wasm32-unknown-unknown\"]
 
 [install]
@@ -330,39 +384,46 @@ sysconfdir = \"etc\"
 
 [rust]
 jemalloc=true
-#default-linker = \"" lld "/bin/lld" "\"
-#default-linker = \""binutils"/bin/ld\"
-default-linker = \""gcc"/bin/gcc\"
 # build rust-lld to use in linking for wasm32 target
 lld = true
-#use-lld = true
 llvm-tools = true
 channel = \"nightly\"
 rpath = true
 optimize = true
 codegen-tests = false
 verbose-tests = false
+
+# Default linker for targets that don't specify linker=
+#default-linker = \""lld"/bin/lld\"
+#use-lld = true
 # system/in-tree/no
-#llvm-libunwind = \"no\"
+llvm-libunwind = \"system\"
 
 [target." triplet "]
 llvm-config = \"" llvm "/bin/llvm-config" "\"
-cc = \"" gcc "/bin/gcc" "\"
-cxx = \"" gcc "/bin/g++" "\"
-ar = \"" binutils "/bin/ar" "\"
-ranlib = \"" binutils "/bin/ranlib" "\"
+cc = \"" clang "/bin/clang" "\"
+cxx = \"" clang "/bin/clang++" "\"
+ar = \"" llvm "/bin/llvm-ar" "\"
+
+#ranlib = \"" llvm "/bin/ranlib" "\"
 #linker = \"" lld "/bin/lld" "\"
 
 [target.wasm32-unknown-unknown]
 llvm-config = \"" llvm "/bin/llvm-config" "\"
+linker = \"" rustlld "/bin/rust-lld" "\"
+
 #cc = \"" clang "/bin/clang" "\"
 #cxx = \"" clang "/bin/clang++" "\"
 ar = \"" llvm "/bin/llvm-ar" "\"
-#ranlib = \"" binutils "/bin/ranlib" "\"
-linker = \"" rustlld "/bin/rust-lld" "\"
+#ranlib = \"\" binutils \"/bin/ranlib" "\"
 
 [dist]
 ") port))))))
+
+         ;; (add-after 'configure 'fail
+         ;;   (lambda* _
+         ;;     (display (format #f "### CC= ~s" (getenv "CC")))
+         ;;     (invoke "fail")))
 
          ;; (add-after 'configure 'fix
          ;;   (lambda* _
@@ -376,15 +437,25 @@ linker = \"" rustlld "/bin/rust-lld" "\"
             ;;  (lambda _
             ;;    (invoke "./dfsdf")))
             ))))
-      (native-inputs (cons* `("libunwind-headers" ,libunwind-headers)
+      (native-inputs (cons*
+                            ;;`("libunwind-headers" ,libunwind-headers)
                             `("libunwind" ,libunwind)
                             `("clang" ,clang-14)
                             `("lld" ,lld)
-                            `("gcc" ,gcc)
+                            `("llvm" ,llvm-14)
+                            ;;`("gcc" ,gcc)
                             `("libcxx" ,libcxx)
-                            `("glibc" ,glibc)
-                            `("gcc:lib" ,gcc "lib")
-                            (package-native-inputs base-rust))))))
+                            ;;`("glibc" ,glibc)
+                            ;;`("gcc:lib" ,gcc "lib")
+
+
+                            ;; It's still added to the "%inputs" from the build system used automatically
+                            (assoc-remove!
+                             (package-native-inputs base-rust)
+                             "gcc")
+
+
+                            )))))
 
 (define-public rust-nightly rust-1.64)
 
