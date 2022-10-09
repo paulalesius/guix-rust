@@ -306,9 +306,7 @@
 #ldflags = \"--unwindlib=libunwind --rtlib=compiler-rt -Wl,-lunwind \"
 #ldflags = \"-L"libunwind"/lib -rtlib=compiler-rt -Wl,-lunwind\"
 #use-libcxx = true
-
-ninja = true
-
+#ninja = true
 #link-shared = false
 #static-libstdcpp = true
 #clang = true
@@ -320,10 +318,10 @@ docs = false
 python = \"" python "/bin/python" "\"
 vendor = true
 submodules = false
-tools = [\"cargo\", \"clippy\", \"rustfmt\", \"analysis\", \"src\", \"rust-demangler\"]
+#tools = [\"cargo\", \"clippy\", \"rustfmt\", \"analysis\", \"src\", \"rust-demangler\"]
 profiler = true
-sanitizers = false
-verbose = 0
+#sanitizers = false
+#verbose = 0
 target = [\"" triplet "\", \"wasm32-unknown-unknown\"]
 
 [install]
@@ -331,9 +329,10 @@ prefix = \"" out "\"
 sysconfdir = \"etc\"
 
 [rust]
-jemalloc=false
-default-linker = \"" lld "/bin/lld" "\"
+jemalloc=true
+#default-linker = \"" lld "/bin/lld" "\"
 #default-linker = \""binutils"/bin/ld\"
+default-linker = \""gcc"/bin/gcc\"
 # build rust-lld to use in linking for wasm32 target
 lld = true
 #use-lld = true
