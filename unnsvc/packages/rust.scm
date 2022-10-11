@@ -4,6 +4,7 @@
   #:use-module (gnu packages bootstrap)
   #:use-module (gnu packages cmake)
   #:use-module (gnu packages compression)
+  #:use-module (gnu packages commencement)
   #:use-module (gnu packages curl)
   #:use-module (gnu packages elf)
   #:use-module (gnu packages flex)
@@ -212,8 +213,8 @@
       (inherit base-rust)
       (arguments
        (substitute-keyword-arguments (package-arguments base-rust)
-         ((#:tests? _ #f)
-          #f)
+         ((#:tests? _ #f) #f)
+         ((#:inplicit-inputs? _) #f)
          ((#:phases phases)
           `(modify-phases ,phases
             ;; Lockfile checksums are now verified for the bootstrap, fix them to the
@@ -227,34 +228,143 @@
                   (("(checksum = )\".*\"" all name)
                    (string-append name "\"" ,%cargo-reference-hash "\"")))))
             ;; Reference: https://github.com/rust-lang/rust/blob/master/config.toml.example
-            (add-after 'configure 'set-supported-targets
-              (lambda* _
-                  (substitute* "config.toml"
-                    (("\\[build\\]")
-                      (string-append
-                                "[build]\n"
-                                 "target = [\"" ,(nix-system->gnu-triplet-for-rust) "\", \"wasm32-unknown-unknown\", \"wasm32-unknown-emscripten\"]\n")))))
-            (add-after 'configure 'set-wasm-target-paths
-              (lambda* (#:key inputs #:allow-other-keys)
-                (let* ((binutils (assoc-ref inputs "binutils"))
-                       (llvm (assoc-ref inputs "llvm"))
-                       (gcc (assoc-ref inputs "gcc")))
-                  (substitute* "config.toml"
-                    (("\\[build\\]")
-                     (string-append
-                      "[target.wasm32-unknown-unknown]\n"
-                      "ar = \"" llvm "/bin/llvm-ar\"\n"
-                      "[target.wasm32-unknown-emscripten]\n"
-                      "ar = \"" llvm "/bin/llvm-ar\"\n"
-                      "[build]\n"))))))
-            (add-after 'configure 'set-build-llvm
-              (lambda _
-                (substitute* "config.toml"
-                  (("^\\[rust]")
-                   (string-append
-                    "[rust]\n"
-                    "lld = true\n")))))))))
+            (delete 'set-nightly-config)
+
+
+
+            ;;(delete 'set-env)
+            ;;(delete 'add-cc-shim-to-path)
+         ;; (add-after 'unpack 'set-env
+         ;;   (lambda* (#:key inputs #:allow-other-keys)
+         ;;     (setenv "SHELL" (which "sh"))
+         ;;     (setenv "CONFIG_SHELL" (which "sh"))
+         ;;     (setenv "CC" (search-input-file inputs "/bin/clang"))
+         ;;     ;; The Guix LLVM package installs only shared libraries.
+         ;;     (setenv "LLVM_LINK_SHARED" "1")))
+         ;; (add-after 'unpack 'add-cc-shim-to-path
+         ;;   (lambda _
+         ;;     (mkdir-p "/tmp/bin")
+         ;;     (symlink (which "clang") "/tmp/bin/cc")
+         ;;     (setenv "PATH" (string-append "/tmp/bin:" (getenv "PATH")))))
+
+
+            (replace 'configure
+              (lambda* (#:key inputs outputs #:allow-other-keys)
+                (let ((out (assoc-ref outputs "out"))
+                      (cargo (assoc-ref inputs "cargo-bootstrap"))
+                      (rustc (assoc-ref inputs "rustc-bootstrap"))
+                      (python (assoc-ref inputs "python"))
+                      (gcc (assoc-ref inputs "gcc"))
+                      (triple ,(or (%current-target-system)
+                                   (nix-system->gnu-triplet-for-rust)))
+                      (lld (assoc-ref inputs "lld"))
+                      (clang (assoc-ref inputs "clang"))
+                      (llvm (assoc-ref inputs "llvm"))
+                      (rustlld (assoc-ref outputs "llvm-tools"))
+                      (gcclib (assoc-ref inputs "gcc:lib"))
+                      (binutils (assoc-ref inputs "binutils")))
+
+                  (display (format #f "DEBUG: ~a\n" out))
+                  (display (format #f "DEBUG: ~a ~a ~a\n" cargo rustc python))
+                  (display (format #f "DEBUG: ~a ~a\n" triple lld))
+                  (display (format #f "DEBUG: ~a ~a\n" clang llvm))
+                  (display (format #f "DEBUG: ~a\n" rustlld))
+
+                  (setenv "JEMALLOC_OVERRIDE"
+                          (search-input-file inputs
+                                             "/lib/libjemalloc_pic.a"))
+
+                  (call-with-output-file "config.toml"
+                    (lambda (port)
+                      (display (string-append "
+[llvm]
+
+[build]
+cargo = \"" cargo "/bin/cargo\"
+rustc = \"" rustc "/bin/rustc\"
+python = \"" python "/bin/python\"
+vendor = true
+submodules = false
+target = [\"" triple "\", \"wasm32-unknown-unknown\"]
+extended = false
+tools = [\"cargo\", \"clippy\", \"rustfmt\", \"analysis\", \"src\", \"rust-demangler\"]
+profiler = false
+sanitizers = false
+verbose = 0
+
+[install]
+prefix = \"" out "\"
+sysconfdir =\"etc\"
+
+[rust]
+jemalloc = true
+default-linker = \"" gcc "/bin/gcc\"
+channel = \"nightly\"
+rpath = true
+remap-debuginfo = true
+lld = true
+
+[target." triple "]
+#llvm-config = \"" llvm "/bin/llvm-config\"
+cc = \"" gcc "/bin/gcc\"
+cxx = \"" gcc "/bin/g++\"
+ar = \"" binutils "/bin/ar\"
+ranlib = \"" binutils "/bin/ranlib\"
+
+[target.wasm32-unknown-unknown]
+llvm-config = \"" llvm "/bin/llvm-config\"
+cc = \"" clang "/bin/clang\"
+cxx = \"" clang "/bin/clang++\"
+ar = \"" llvm "/bin/llvm-ar\"
+ranlib = \"" llvm "/bin/llvm-ranlib\"
+linker = \"" rustlld "/bin/rust-lld\"
+") port))))))
+            ;; (add-after 'reconfigure 'set-supported-targets
+            ;;   (lambda* _
+            ;;       (substitute* "config.toml"
+            ;;         (("\\[build.*")
+            ;;           (string-append
+            ;;                     "[build]\n"
+            ;;                      "target = [\"" ,(nix-system->gnu-triplet-for-rust) "\", \"wasm32-unknown-unknown\"]\n")))))
+            ;; (add-after 'set-supported-targets 'enable-clang
+            ;;   (lambda* (#:key inputs outputs #:allow-other-keys)
+            ;;     (substitute* "config.toml"
+            ;;       (("\\[llvm.*]")
+            ;;        (string-append
+            ;;         "[llvm]\n")))))
+            ;; (add-after 'enable-clang 'set-wasm-target-paths
+            ;;   (lambda* (#:key inputs outputs #:allow-other-keys)
+            ;;     (let* ((binutils (assoc-ref inputs "binutils"))
+            ;;            (llvm (assoc-ref inputs "llvm"))
+            ;;            (gcc (assoc-ref inputs "gcc"))
+            ;;            (lld (assoc-ref inputs "lld"))
+            ;;            (rustlld (assoc-ref outputs "llvm-tools")))
+            ;;       (substitute* "config.toml"
+            ;;         (("\\[dist.*")
+            ;;          (string-append
+            ;;           "[target.wasm32-unknown-unknown]\n"
+            ;;           "llvm-config = \"" llvm "/bin/llvm-config\"\n"
+            ;;           "ar = \"" llvm "/bin/llvm-ar\"\n"
+            ;;           "ranlib = \"" llvm "/bin/llvm-ranlib\"\n"
+            ;;           "linker = \"" rustlld "/bin/rust-lld\"\n"
+            ;;           "[dist]\n"))))))
+            ;; (add-after 'set-wasm-target-paths 'set-build-llvm
+            ;;   (lambda _
+            ;;     (substitute* "config.toml"
+            ;;       (("\\[rust.*")
+            ;;        (string-append
+            ;;         "[rust]\n"
+            ;;         "remap-debuginfo = true\n"
+            ;;         "lld = true\n")))))
+
+            ;; (add-after 'configure 'fail
+            ;;   (lambda _
+            ;;     (invoke "fail, to inspect config")))
+            ))))
       (native-inputs (cons* `("libunwind-headers" ,libunwind-headers)
+                            `("lld" ,lld-14)
+                            `("clang" ,clang-14)
+                            `("gcc:lib" ,gcc-12 "lib")
                             (package-native-inputs base-rust))))))
 
 (define-public rust-nightly rust-1.64)
@@ -262,7 +372,7 @@
 ;; @TODO absorb this into the main build process as a package output§
 (define-public rust-nightly-src
    (package
-     (inherit rust-1.64)
+     (inherit rust-nightly)
      (name "rust-nightly-src")
      (build-system copy-build-system)
      (native-inputs '())
@@ -278,4 +388,4 @@
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box.")))
 
-;;rust-1.64
+rust-1.64

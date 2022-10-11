@@ -3,7 +3,7 @@
 Features in addition to those provided by the base GNU Guix rust distribution:
 
 - Rust 1.64
-- Wasm targets (Don't work as expected at present as they use the wrong linker, will have to re-write the config.toml when I have the time)
+- Wasm targets
     - wasm32-unknown-unknown
 - Profiler
 - Sanitizers
@@ -11,7 +11,6 @@ Features in addition to those provided by the base GNU Guix rust distribution:
 - Miri
 - Rust-demangler
 - Llvm-tools bundled with the source code, as a package output
-- rust-lld
 - Nightly tracking the latest stable release, to use the -Z flags
 - Built using the latest llvm-14 and gcc-12
 
