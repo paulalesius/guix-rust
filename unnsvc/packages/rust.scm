@@ -25,6 +25,7 @@
   #:use-module (guix build-system gnu)
   #:use-module (guix build-system trivial)
   #:use-module (gnu packages libunwind)
+  #:use-module (gnu packages compression)
   #:use-module (guix download)
   #:use-module (guix git-download)
   #:use-module ((guix licenses) #:prefix license:)
@@ -216,12 +217,18 @@
       (inherit base-rust)
       (arguments
        (substitute-keyword-arguments (package-arguments base-rust)
-         ((#:tests? _ #f)
+         ((#:tests? _)
           #f)
-         ;;((#:make-flags flags)
-         ;; `(list (string-append "CC=" "clang")))
-         ;;((#:configure-flags flags)
-         ;; `(list (string-append "CC=" "clang")))
+         ;; Disable implicit inputs set by the gnu-build system, that's usually gcc and binutils and sets paths
+         ((#:implicit-inputs? _)
+          #f)
+         ((#:implicit-cross-inputs? _)
+          #f)
+         ;; Disable existing flags set by the gnu-build-system
+         ((#:make-flags flags)
+          '())
+         ((#:configure-flags flags)
+          '())
          ((#:phases phases)
           `(modify-phases ,phases
             ;; Lockfile checksums are now verified for the bootstrap, fix them to the
@@ -234,41 +241,6 @@
                 (substitute* "src/tools/rust-analyzer/Cargo.lock"
                   (("(checksum = )\".*\"" all name)
                    (string-append name "\"" ,%cargo-reference-hash "\"")))))
-            ;; Reference: https://github.com/rust-lang/rust/blob/master/config.toml.example
-            ;; (add-after 'configure 'set-supported-targets
-            ;;   (lambda* _
-            ;;       (substitute* "config.toml"
-            ;;         (("\\[build\\]")
-            ;;           (string-append
-            ;;                     "[build]\n"
-            ;;                      "target = [\"" ,(nix-system->gnu-triplet-for-rust) "\", \"wasm32-unknown-unknown\"]\n")))))
-            ;; (add-after 'configure 'set-wasm-target-paths
-            ;;   (lambda* (#:key inputs #:allow-other-keys)
-            ;;     (let* ((binutils (assoc-ref inputs "binutils"))
-            ;;            (llvm (assoc-ref inputs "llvm"))
-            ;;            (clang (assoc-ref inputs "clang"))
-            ;;            (gcc (assoc-ref inputs "gcc")))
-            ;;       (substitute* "config.toml"
-            ;;         (("\\[build\\]")
-            ;;          (string-append
-            ;;           "[target.wasm32-unknown-unknown]\n"
-            ;;           "linker = lld\n"
-            ;;           ;;"ar = \"" binutils "/bin/ar\"\n"
-            ;;           ;;"ranlib = \"" binutils "/bin/ranlib\"\n"
-            ;;           ;;"cc = \"" gcc "/bin/gcc\"\n"
-            ;;           ;;"cxx = \"" gcc "/bin/g++\"\n"
-            ;;           "[build]\n"))))))
-            ;; (add-after 'configure 'set-build-llvm
-            ;;   (lambda _
-            ;;     (substitute* "config.toml"
-            ;;       (("^\\[rust]")
-            ;;        (string-append
-            ;;         "[rust]\n"
-            ;;         "default-linker = \"clang\"\n"
-            ;;         "lld = true\n")))))
-            ;;(delete 'set-build-llvm)
-            ;;(delete 'set-wasm-target-paths)
-            ;;(delete 'set-supported-targets)
             (delete 'set-nightly-config)
             (delete 'add-gdb-to-config)
             (delete 'patch-reference-to-cc)
@@ -280,40 +252,33 @@
              (setenv "SHELL" (which "sh"))
              (setenv "CONFIG_SHELL" (which "sh"))
              (setenv "CC" (string-append (assoc-ref inputs "clang") "/bin/clang"))
-             (setenv "CXX" (string-append (assoc-ref inputs "clang") "/bin/clang"))
-             ;; The Guix LLVM package installs only shared libraries.
-             (setenv "LLVM_LINK_SHARED" "1")))
+             (setenv "CXX" (string-append (assoc-ref inputs "clang") "/bin/clang++"))
+             (setenv "LLVM_LINK_SHARED" "1")
 
-        ;; Ugly workaround, just set clang to be found first in the path and link it to /bin/gcc
-        (add-after 'set-env-clang 'add-cc-shim-to-path-clang
-           (lambda* (#:key inputs #:allow-other-keys)
-             (mkdir-p "/tmp/bin")
-             ;;(symlink (which "clang") "/tmp/bin/cc")
-             (symlink (string-append (assoc-ref inputs "clang") "/bin/clang") "/tmp/bin/cc")
-             (symlink (string-append (assoc-ref inputs "clang") "/bin/clang") "/tmp/bin/gcc")
-             (setenv "PATH" (string-append "/tmp/bin:" (getenv "PATH")))))
+             ;; LLVM build fails to find zlib in nonstandard location
+             ;; doesn't pick up -L from the ldflags attribute, doesn't pick up from here either
+             ;; Required for thin-lto.
+             ;; https://github.com/NixOS/nixpkgs/issues/92946
+             ;; https://github.com/llvm/llvm-project/issues/53561
+             ;;(setenv "LD_LIBRARY_PATH" (string-append
+             ;;                           zlib "/lib"))
 
-         ;; (replace 'patch-reference-to-cc
-         ;;   ;; This prevents errors like 'error: linker `cc` not found' when
-         ;;   ;; "cc" is not found on PATH.
-         ;;   (lambda* (#:key inputs #:allow-other-keys)
-         ;;     (let ((clang (assoc-ref inputs "clang")))
-         ;;       (substitute* (find-files "." "^link.rs$")
-         ;;         (("\"cc\".as_ref")
-         ;;          (format #f "~s.as_ref" (string-append clang "/bin/clang")))))))
-        (add-after 'unpack 'set-clang
-          (lambda* _
-            (lambda* (#:key inputs #:allow-other-keys)
-              (let* ((clang (assoc-ref inputs "clang")))
-                (setenv "CC" (string-append clang "/bin/clang"))
-                (setenv "CXX" (string-append clang "/bin/clang++"))))))
+             (setenv "RUST_BACKTRACE" "1")
+             ;;(setenv "LD_LIBRARY_PATH" (string-append zlib "/lib"))
+
+             ;; The compiler is no longer directly built against jemalloc, but
+             ;; rather via the jemalloc-sys crate (which vendors the jemalloc
+             ;; source). To use jemalloc we must enable linking to it (otherwise
+             ;; it would use the system allocator), and set an environment
+             ;; variable pointing to the compiled jemalloc.
+             (setenv "JEMALLOC_OVERRIDE"
+                     (search-input-file inputs
+                                        "/lib/libjemalloc_pic.a"))))
+
          (replace 'configure
            (lambda* (#:key inputs outputs #:allow-other-keys)
              (let* ((out (assoc-ref outputs "out"))
-                    ;;(gcc (assoc-ref inputs "gcc"))
-                    ;;(gcclib (assoc-ref inputs "gcc:lib"))
                     (python (assoc-ref inputs "python"))
-                    ;;(binutils (assoc-ref inputs "binutils"))
                     (rustc (assoc-ref inputs "rustc-bootstrap"))
                     (cargo (assoc-ref inputs "cargo-bootstrap"))
                     (llvm (assoc-ref inputs "llvm"))
@@ -323,46 +288,37 @@
                     (triplet ,(or (%current-target-system)
                                   (nix-system->gnu-triplet-for-rust)))
                     (libcxx (assoc-ref inputs "libcxx"))
+                    (gcc (assoc-ref inputs "gcc"))
+                    (gcclib (assoc-ref inputs "gcc:lib"))
                     (rustlld (assoc-ref outputs "llvm-tools"))
-                    ;;(gcc (assoc-ref inputs "gcc"))
-                    ;;(libunwind-headers (assoc-ref inputs "libunwind-headers"))
                     (libunwind (assoc-ref inputs "libunwind"))
-                    ;;(glibc (assoc-ref inputs "glibc"))
-                    )
-               ;; The compiler is no longer directly built against jemalloc, but
-               ;; rather via the jemalloc-sys crate (which vendors the jemalloc
-               ;; source). To use jemalloc we must enable linking to it (otherwise
-               ;; it would use the system allocator), and set an environment
-               ;; variable pointing to the compiled jemalloc.
-               (display (format #f "### LLVM ~a ~a ~a\n" llvm lld clang))
-               (display (format #f "### eh ~a ~a ~a\n" rustc python out))
-               (display (format #f "### jemalloc ~a ~a\n" jemalloc rustlld))
-               ;;(display (format #f "### gcc ~a ~a\n" gcc libcxx))
-               (display (format #f "### inputs ~a\n" inputs))
-               (display (format #f "### clang-runtime ~a\n" clang))
-               ;;,(pretty-print inputs)
-               (setenv "JEMALLOC_OVERRIDE"
-                       (search-input-file inputs
-                                          "/lib/libjemalloc_pic.a"))
+                    (libunwind-headers (assoc-ref inputs "libunwind-headers"))
+                    (zlib (assoc-ref inputs "zlib")))
+
+               (display (format #f "DEBUG: zlib: ~a" zlib))
+
                (call-with-output-file "config.toml"
                  (lambda (port)
                    (display (string-append "
 [llvm]
-use-libcxx = true
+# The -fPIC flag is missing somewhere preventing one from using use-libcxx (likely rust build bug)
+# use-libcxx = false
 ninja = true
-ldflags = \"-L" libcxx "/lib -L" libunwind "/lib\"
-thin-lto = true
-use-linker = \"" lld "/bin/lld\"
-
-# cxxflags = \"-I\" libcxx \"/include -I\" glibc \"/include -I\" gcc \"/include" "\"
-# ldflags = \"-L\" libcxx \"/lib -L\" glibc \"/lib -L\" gcclib \"/lib" "\"
-#cxxflags = \"-Ilibunwind-headers /include\"
-#cflags = \"-I libunwind-headers /include\"
-#ldflags = \"--unwindlib=libunwind --rtlib=compiler-rt -Wl,-lunwind \"
-#ldflags = \"-Llibunwind/lib -rtlib=compiler-rt -Wl,-lunwind\"
+cflags = \"-I" libunwind "/include -I" libunwind-headers "/include\"
+cxxflags = \"-I" libunwind "/include -I" libunwind-headers "/include\"
+ldflags = \"-L" libunwind "/lib -lunwind\"
+# These ldflags do seem to end up in CMAKE_EXE_LINKER_FLAGS, but still fails to find zlib, calls llvm-tblgen without it
+# ldflags = \"-L" libcxx "/lib -L" libunwind "/lib -L" zlib "/lib\"
+# thin-lto = true
+# Tin-lto requires link-shared = true according to config.toml.example
 link-shared = true
-#static-libstdcpp = true
-#clang = true
+# [rust] use-lld = true and use-linker can't be set at the same time
+use-linker = \"" lld "/bin/lld\"
+# Custom CMake defines to set when building LLVM
+# Ugly hack because the build fails to find libz.so.1, force a library path flag to all linker invokations, still fails
+# build-config = {ZLIB_ROOT=\"" zlib "\",CMAKE_SHARED_LINKER_FLAGS=\"${CMAKE_SHARED_LINKER_FLAGS} -L" zlib "/lib \"}
+static-libstdcpp = true
+# clang = false
 
 [build]
 cargo = \"" cargo "/bin/cargo" "\"
@@ -392,73 +348,44 @@ optimize = true
 codegen-tests = false
 verbose-tests = false
 
-# Default linker for targets that don't specify linker=
-#default-linker = \""lld"/bin/lld\"
-#use-lld = true
+# use-lld = true
 # system/in-tree/no
 llvm-libunwind = \"system\"
 
 [target." triplet "]
-llvm-config = \"" llvm "/bin/llvm-config" "\"
+llvm-config = \"" llvm "/bin/llvm-config\"
 cc = \"" clang "/bin/clang" "\"
 cxx = \"" clang "/bin/clang++" "\"
 ar = \"" llvm "/bin/llvm-ar" "\"
-
-#ranlib = \"" llvm "/bin/ranlib" "\"
-#linker = \"" lld "/bin/lld" "\"
+linker = \"clang\"
 
 [target.wasm32-unknown-unknown]
-llvm-config = \"" llvm "/bin/llvm-config" "\"
+ar = \"" llvm "/bin/llvm-ar" "\"
 linker = \"" rustlld "/bin/rust-lld" "\"
 
-#cc = \"" clang "/bin/clang" "\"
-#cxx = \"" clang "/bin/clang++" "\"
-ar = \"" llvm "/bin/llvm-ar" "\"
-#ranlib = \"\" binutils \"/bin/ranlib" "\"
-
 [dist]
-") port))))))
-
-         ;; (add-after 'configure 'fail
-         ;;   (lambda* _
-         ;;     (display (format #f "### CC= ~s" (getenv "CC")))
-         ;;     (invoke "fail")))
-
-         ;; (add-after 'configure 'fix
-         ;;   (lambda* _
-         ;;     (substitute* "src/llvm-project/clang/CMakeLists.txt"
-         ;;       (("CLANG_DEFAULT_RTLIB \"\"")
-         ;;        "CLANG_DEFAULT_RTLIB \"compiler-rt\"")
-         ;;       (("CLANG_DEFAULT_UNWINDLIB \"\"")
-         ;;        "CLANG_DEFAULT_UNWINDLIB \"libunwind\""))))
-
-            ;;(add-after 'configure 'fail
-            ;;  (lambda _
-            ;;    (invoke "./dfsdf")))
-            ))))
+") port))))))))))
       (native-inputs (cons*
-                            ;;`("libunwind-headers" ,libunwind-headers)
                             `("libunwind" ,libunwind)
+                            `("libunwind-headers" ,libunwind-headers)
                             `("clang" ,clang-14)
                             `("lld" ,lld)
                             `("llvm" ,llvm-14)
-                            ;;`("gcc" ,gcc)
                             `("libcxx" ,libcxx)
-                            ;;`("glibc" ,glibc)
-                            ;;`("gcc:lib" ,gcc "lib")
-
-
-                            ;; It's still added to the "%inputs" from the build system used automatically
+                            `("zlib" ,zlib)
+                            ;;`("gcc" ,gcc-12)
+                            ;;`("gcc:lib" ,gcc-12 "lib")
+                            `("pkg-config" ,pkg-config-for-build)
                             (assoc-remove!
                              (package-native-inputs base-rust)
-                             "gcc")
+                             "gcc"))))))
 
-
-                            )))))
 
 (define-public rust-nightly rust-1.64)
 
-;; @TODO absorb this into the main build process as a package output§
+;; @TODO absorb this into the main build process as a package output.
+;; The build above probably produces a .dist tarball that can be unzipped
+;; into one of its outputs
 (define-public rust-nightly-src
    (package
      (inherit rust-1.64)
@@ -477,4 +404,4 @@ ar = \"" llvm "/bin/llvm-ar" "\"
      (description "This package provide source code for the Rust standard
 library, only use by rust-analyzer, make rust-analyzer out of the box.")))
 
-rust-1.64
+rust-nightly
