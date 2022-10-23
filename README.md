@@ -1,3 +1,6 @@
+# Repository abandoned
+After several tries with building it using clang, I had to give up and switch to a distro that supports rustup to focus on other work, for now. See issue https://github.com/paulalesius/guix-rust/issues/1 , feel free to clone this repository and see the clangbased/gccbased branches if you want to try building it.
+
 # Rust Channel for Guix
 
 Features in addition to those provided by the base GNU Guix rust distribution:
